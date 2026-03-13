@@ -82,9 +82,11 @@ def extract_audio(video_path: Path, audio_path: Path) -> None:
         sys.exit(1)
 
 
-def transcribe(audio_path: Path, model_name: str, output_dir: Path) -> Path:
+def transcribe(audio_path: Path, model_name: str, output_dir: Path, stem: str | None = None) -> Path:
     """Transcribe audio to English using OpenAI Whisper."""
     import whisper
+
+    output_stem = stem if stem is not None else audio_path.stem
 
     print(f"Loading Whisper model '{model_name}'…")
     model = whisper.load_model(model_name)
@@ -92,13 +94,13 @@ def transcribe(audio_path: Path, model_name: str, output_dir: Path) -> Path:
     print("Transcribing (this may take a while)…")
     result = model.transcribe(str(audio_path), language="en", task="transcribe")
 
-    transcript_path = output_dir / (audio_path.stem + ".txt")
+    transcript_path = output_dir / (output_stem + ".txt")
     with open(transcript_path, "w", encoding="utf-8") as f:
         f.write(result["text"].strip())
         f.write("\n")
 
     # Also write an SRT subtitle file
-    srt_path = output_dir / (audio_path.stem + ".srt")
+    srt_path = output_dir / (output_stem + ".srt")
     with open(srt_path, "w", encoding="utf-8") as f:
         for i, segment in enumerate(result["segments"], start=1):
             start = _format_srt_time(segment["start"])
@@ -148,13 +150,13 @@ def main() -> None:
     if args.keep_audio:
         audio_path = output_dir / (video_path.stem + ".wav")
         extract_audio(video_path, audio_path)
-        transcript_path = transcribe(audio_path, args.model, output_dir)
+        transcript_path = transcribe(audio_path, args.model, output_dir, stem=video_path.stem)
     else:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             audio_path = Path(tmp.name)
         try:
             extract_audio(video_path, audio_path)
-            transcript_path = transcribe(audio_path, args.model, output_dir)
+            transcript_path = transcribe(audio_path, args.model, output_dir, stem=video_path.stem)
         finally:
             audio_path.unlink(missing_ok=True)
 
