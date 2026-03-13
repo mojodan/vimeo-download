@@ -23,7 +23,7 @@ def download_video(url: str, output_dir: Path) -> Path:
 
     cmd = [
         "yt-dlp",
-        "--format", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+        "--format", "bestvideo+bestaudio/best",
         "--merge-output-format", "mp4",
         "--output", output_template,
         "--no-playlist",
