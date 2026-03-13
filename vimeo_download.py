@@ -25,6 +25,7 @@ def download_video(url: str, output_dir: Path) -> Path:
         "yt-dlp",
         "--format", "bestvideo+bestaudio/best",
         "--merge-output-format", "mp4",
+        "--replace-in-metadata", "title", r"[^a-zA-Z0-9]+", "-",
         "--output", output_template,
         "--no-playlist",
         "--print", "after_move:filepath",
@@ -49,6 +50,13 @@ def download_video(url: str, output_dir: Path) -> Path:
             print("Could not locate downloaded video file.", file=sys.stderr)
             sys.exit(1)
         video_path = mp4_files[0]
+
+    # Strip any leading/trailing hyphens left after sanitisation (e.g. "-title-.mp4" → "title.mp4")
+    clean_stem = video_path.stem.strip("-")
+    if clean_stem != video_path.stem:
+        clean_path = video_path.with_name(clean_stem + video_path.suffix)
+        video_path.rename(clean_path)
+        video_path = clean_path
 
     print(f"Downloaded: {video_path}")
     return video_path
