@@ -29,6 +29,7 @@ def download_video(url: str, output_dir: Path) -> Path:
         "--output", output_template,
         "--no-playlist",
         "--print", "after_move:filepath",
+        "--referer", url,
         url,
     ]
 
