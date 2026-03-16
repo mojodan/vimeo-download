@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -18,6 +19,11 @@ import subprocess
 import tempfile
 import urllib.request
 from pathlib import Path
+
+
+def log(msg: str, *, file=None) -> None:
+    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] {msg}", file=file)
 
 
 def resolve_url(url: str) -> str:
@@ -35,7 +41,7 @@ def resolve_url(url: str) -> str:
     if "/reviews/" not in url:
         return url
 
-    print("Resolving Vimeo review URL…")
+    log("Resolving Vimeo review URL…")
     req = urllib.request.Request(url, headers={
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -47,7 +53,7 @@ def resolve_url(url: str) -> str:
         with urllib.request.urlopen(req) as resp:
             html = resp.read().decode("utf-8")
     except Exception as exc:
-        print(f"Warning: could not fetch review page ({exc}), trying URL as-is", file=sys.stderr)
+        log(f"Warning: could not fetch review page ({exc}), trying URL as-is", file=sys.stderr)
         return url
 
     # Vimeo review pages embed the full video config in a Next.js __NEXT_DATA__
@@ -63,7 +69,7 @@ def resolve_url(url: str) -> str:
             )
             if player_match:
                 player_url = f"https://player.vimeo.com/video/{player_match.group(1)}?h={player_match.group(2)}"
-                print(f"Resolved to: {player_url}")
+                log(f"Resolved to: {player_url}")
                 return player_url
         except (json.JSONDecodeError, KeyError):
             pass
@@ -72,10 +78,10 @@ def resolve_url(url: str) -> str:
     player_match = re.search(r'player\.vimeo\.com/video/(\d+)\?h=([0-9a-f]+)', html)
     if player_match:
         player_url = f"https://player.vimeo.com/video/{player_match.group(1)}?h={player_match.group(2)}"
-        print(f"Resolved to: {player_url}")
+        log(f"Resolved to: {player_url}")
         return player_url
 
-    print("Warning: could not extract player hash from review page, trying URL as-is", file=sys.stderr)
+    log("Warning: could not extract player hash from review page, trying URL as-is", file=sys.stderr)
     return url
 
 
@@ -95,11 +101,11 @@ def download_video(url: str, output_dir: Path) -> Path:
         url,
     ]
 
-    print(f"Downloading: {url}")
+    log(f"Downloading: {url}")
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
-        print(f"Error downloading video:\n{result.stderr}", file=sys.stderr)
+        log(f"Error downloading video:\n{result.stderr}", file=sys.stderr)
         sys.exit(1)
 
     # yt-dlp prints the final filepath via --print after_move:filepath
@@ -110,7 +116,7 @@ def download_video(url: str, output_dir: Path) -> Path:
         # Fall back: find the most recently modified mp4 in output_dir
         mp4_files = sorted(output_dir.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
         if not mp4_files:
-            print("Could not locate downloaded video file.", file=sys.stderr)
+            log("Could not locate downloaded video file.", file=sys.stderr)
             sys.exit(1)
         video_path = mp4_files[0]
 
@@ -121,7 +127,7 @@ def download_video(url: str, output_dir: Path) -> Path:
         video_path.rename(clean_path)
         video_path = clean_path
 
-    print(f"Downloaded: {video_path}")
+    log(f"Downloaded: {video_path}")
     return video_path
 
 
@@ -137,11 +143,11 @@ def extract_audio(video_path: Path, audio_path: Path) -> None:
         str(audio_path),
     ]
 
-    print("Extracting audio…")
+    log("Extracting audio…")
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
-        print(f"Error extracting audio:\n{result.stderr}", file=sys.stderr)
+        log(f"Error extracting audio:\n{result.stderr}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -151,10 +157,10 @@ def transcribe(audio_path: Path, model_name: str, output_dir: Path, stem: str | 
 
     output_stem = stem if stem is not None else audio_path.stem
 
-    print(f"Loading Whisper model '{model_name}'…")
+    log(f"Loading Whisper model '{model_name}'…")
     model = whisper.load_model(model_name)
 
-    print("Transcribing (this may take a while)…")
+    log("Transcribing (this may take a while)…")
     result = model.transcribe(str(audio_path), language="en", task="transcribe")
 
     transcript_path = output_dir / (output_stem + ".txt")
@@ -223,12 +229,12 @@ def main() -> None:
         finally:
             audio_path.unlink(missing_ok=True)
 
-    print(f"\nDone!")
-    print(f"  Video:      {video_path}")
-    print(f"  Transcript: {transcript_path}")
+    log("Done!")
+    log(f"  Video:      {video_path}")
+    log(f"  Transcript: {transcript_path}")
     srt_path = transcript_path.with_suffix(".srt")
     if srt_path.exists():
-        print(f"  Subtitles:  {srt_path}")
+        log(f"  Subtitles:  {srt_path}")
 
 
 if __name__ == "__main__":
