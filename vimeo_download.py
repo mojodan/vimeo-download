@@ -163,7 +163,12 @@ def download_description(url: str, output_dir: Path) -> Path:
         sys.exit(1)
 
     description = result.stdout.strip()
-    date_str = datetime.datetime.now().strftime("%Y%m%d")
+    # Extract YYYYMMDD date from the output directory name
+    match = re.search(r'(\d{8})', output_dir.name)
+    if not match:
+        log("Error: could not extract a YYYYMMDD date from the output directory name.", file=sys.stderr)
+        sys.exit(1)
+    date_str = match.group(1)
     desc_path = output_dir / f"description-{date_str}.md"
 
     with open(desc_path, "w", encoding="utf-8") as f:
