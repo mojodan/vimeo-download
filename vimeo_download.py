@@ -30,21 +30,67 @@ def resolve_url(url: str) -> str:
     """
     Resolve a Vimeo review URL to a player URL that yt-dlp can handle.
 
-    The new-style review URLs (vimeo.com/reviews/{uuid}/videos/{id}) are not
-    matched by yt-dlp's VimeoReviewIE, so it falls back to the plain VimeoIE
-    which requests the video by ID alone and gets a 404 for private videos.
+    Handles two URL formats:
+    - Old style: vimeo.com/{user}/review/{id}/{hash}?version=1
+    - New style: vimeo.com/reviews/{uuid}/videos/{id}
 
-    We fetch the review page (which is a Next.js app that embeds the full
-    video config server-side in a __NEXT_DATA__ JSON blob) and pull out the
-    player URL including the private hash token, then hand that to yt-dlp.
-
-    https://vimeo.com/opentrader/review/436577886/7021a182d7?version=1
+    The new-style review URLs are not matched by yt-dlp's VimeoReviewIE,
+    so we fetch the review page (a Next.js app that embeds the full video
+    config in a __NEXT_DATA__ JSON blob) and extract the player URL
+    including the private hash token.
     """
-    if "/review/" not in url:
+    if "/reviews/" in url:
+        # New-style review URL — must fetch the page to get the hash token
+        return _resolve_reviews_url(url)
+    elif "/review/" in url:
+        # Old-style review URL — extract video_id/hash from path
+        buffy = '/'.join(url.split('/')[-2:]).split('?')[0]
+        return f"https://vimeo.com/{buffy}"
+    return url
+
+
+def _resolve_reviews_url(url: str) -> str:
+    """Fetch a new-style Vimeo review page and extract the player URL."""
+    log("Resolving Vimeo review URL…")
+    req = urllib.request.Request(url, headers={
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        )
+    })
+    try:
+        with urllib.request.urlopen(req) as resp:
+            html = resp.read().decode("utf-8")
+    except Exception as exc:
+        log(f"Warning: could not fetch review page ({exc}), trying URL as-is", file=sys.stderr)
         return url
-    
-    buffy = '/'.join(url.split('/')[-2:]).split('?')[0]
-    return f"https://vimeo.com/{buffy}"
+
+    # Try __NEXT_DATA__ JSON blob first
+    match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+    if match:
+        try:
+            raw = json.loads(match.group(1))
+            player_match = re.search(
+                r'player\.vimeo\.com/video/(\d+)\?h=([0-9a-f]+)',
+                json.dumps(raw),
+            )
+            if player_match:
+                player_url = f"https://player.vimeo.com/video/{player_match.group(1)}?h={player_match.group(2)}"
+                log(f"Resolved to: {player_url}")
+                return player_url
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    # Fallback: scan the raw HTML for the player URL
+    player_match = re.search(r'player\.vimeo\.com/video/(\d+)\?h=([0-9a-f]+)', html)
+    if player_match:
+        player_url = f"https://player.vimeo.com/video/{player_match.group(1)}?h={player_match.group(2)}"
+        log(f"Resolved to: {player_url}")
+        return player_url
+
+    log("Warning: could not extract player hash from review page, trying URL as-is", file=sys.stderr)
+    return url
     
 
 def download_video(url: str, output_dir: Path) -> Path:
