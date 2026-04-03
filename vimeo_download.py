@@ -37,53 +37,15 @@ def resolve_url(url: str) -> str:
     We fetch the review page (which is a Next.js app that embeds the full
     video config server-side in a __NEXT_DATA__ JSON blob) and pull out the
     player URL including the private hash token, then hand that to yt-dlp.
+
+    https://vimeo.com/opentrader/review/436577886/7021a182d7?version=1
     """
-    if "/reviews/" not in url:
+    if "/review/" not in url:
         return url
-
-    log("Resolving Vimeo review URL…")
-    req = urllib.request.Request(url, headers={
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
-    })
-    try:
-        with urllib.request.urlopen(req) as resp:
-            html = resp.read().decode("utf-8")
-    except Exception as exc:
-        log(f"Warning: could not fetch review page ({exc}), trying URL as-is", file=sys.stderr)
-        return url
-
-    # Vimeo review pages embed the full video config in a Next.js __NEXT_DATA__
-    # JSON blob.  The player_embed_url field contains the hash-gated player URL.
-    match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
-    if match:
-        try:
-            raw = json.loads(match.group(1))
-            # player.vimeo.com/video/{id}?h={hash} appears somewhere in the blob
-            player_match = re.search(
-                r'player\.vimeo\.com/video/(\d+)\?h=([0-9a-f]+)',
-                json.dumps(raw),
-            )
-            if player_match:
-                player_url = f"https://player.vimeo.com/video/{player_match.group(1)}?h={player_match.group(2)}"
-                log(f"Resolved to: {player_url}")
-                return player_url
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-    # Fallback: scan the raw HTML for the player URL
-    player_match = re.search(r'player\.vimeo\.com/video/(\d+)\?h=([0-9a-f]+)', html)
-    if player_match:
-        player_url = f"https://player.vimeo.com/video/{player_match.group(1)}?h={player_match.group(2)}"
-        log(f"Resolved to: {player_url}")
-        return player_url
-
-    log("Warning: could not extract player hash from review page, trying URL as-is", file=sys.stderr)
-    return url
-
+    
+    buffy = '/'.join(url.split('/')[-2:]).split('?')[0]
+    return f"https://vimeo.com/{buffy}"
+    
 
 def download_video(url: str, output_dir: Path) -> Path:
     """Download a Vimeo video using yt-dlp in the best available quality."""
