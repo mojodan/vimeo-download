@@ -163,6 +163,12 @@ def download_description(url: str, output_dir: Path) -> Path:
         sys.exit(1)
 
     description = result.stdout.strip()
+    # Convert to markdown: replace leading asterisks with hyphens for list items
+    lines = description.splitlines()
+    for i, line in enumerate(lines):
+        if re.match(r'^(\s*)\*', line):
+            lines[i] = re.sub(r'^(\s*)\*', r'\1-', line)
+    description = '\n'.join(lines)
     # Extract YYYYMMDD date from the output directory name
     match = re.search(r'(\d{8})', output_dir.name)
     if not match:
