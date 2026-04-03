@@ -150,6 +150,41 @@ def _format_srt_time(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
+def download_description(url: str, output_dir: Path) -> Path:
+    """Download the video description and save it as a markdown file."""
+    resolved = resolve_url(url)
+    cmd = ["yt-dlp", "--print", "description", resolved]
+
+    log(f"Fetching description: {resolved}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        log(f"Error fetching description:\n{result.stderr}", file=sys.stderr)
+        sys.exit(1)
+
+    description = result.stdout.strip()
+    # Convert to markdown: replace leading asterisks with hyphens for list items
+    lines = description.splitlines()
+    for i, line in enumerate(lines):
+        if re.match(r'^(\s*)\*', line):
+            lines[i] = re.sub(r'^(\s*)\*', r'\1-', line)
+    description = '\n'.join(lines)
+    # Extract YYYYMMDD date from the output directory name
+    match = re.search(r'(\d{8})', output_dir.name)
+    if not match:
+        log("Error: could not extract a YYYYMMDD date from the output directory name.", file=sys.stderr)
+        sys.exit(1)
+    date_str = match.group(1)
+    desc_path = output_dir / f"description-{date_str}.md"
+
+    with open(desc_path, "w", encoding="utf-8") as f:
+        f.write(description)
+        f.write("\n")
+
+    log(f"Description saved: {desc_path}")
+    return desc_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Download a Vimeo video and transcribe it to English.")
     parser.add_argument("url", help="Vimeo video URL")
@@ -169,10 +204,20 @@ def main() -> None:
         action="store_true",
         help="Keep the extracted audio WAV file after transcription.",
     )
+    parser.add_argument(
+        "-desc", "--description",
+        action="store_true",
+        help="Download the video description and save as a markdown file.",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Download description if requested
+    desc_path = None
+    if args.description:
+        desc_path = download_description(args.url, output_dir)
 
     # Download
     video_path = download_video(args.url, output_dir)
@@ -197,6 +242,8 @@ def main() -> None:
     srt_path = transcript_path.with_suffix(".srt")
     if srt_path.exists():
         log(f"  Subtitles:  {srt_path}")
+    if desc_path:
+        log(f"  Description: {desc_path}")
 
 
 if __name__ == "__main__":
