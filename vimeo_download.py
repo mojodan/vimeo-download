@@ -44,8 +44,17 @@ def resolve_url(url: str) -> str:
         return _resolve_reviews_url(url)
     elif "/review/" in url:
         # Old-style review URL — extract video_id/hash from path
-        buffy = '/'.join(url.split('/')[-2:]).split('?')[0]
-        return f"https://vimeo.com/{buffy}"
+        # Format: vimeo.com/{user}/review/{video_id}/{hash}?version=...
+        # Use player.vimeo.com embed URL so yt-dlp passes the hash correctly
+        parts = url.split('?')[0].rstrip('/').split('/')
+        # Find "review" in the path and grab the two segments after it
+        try:
+            idx = parts.index('review')
+            video_id = parts[idx + 1]
+            video_hash = parts[idx + 2]
+            return f"https://player.vimeo.com/video/{video_id}?h={video_hash}"
+        except (ValueError, IndexError):
+            return url
     return url
 
 
