@@ -26,9 +26,12 @@ def log(msg: str, *, file=None) -> None:
     print(f"[{ts}] {msg}", file=file)
 
 
-def resolve_url(url: str) -> str:
+def resolve_url(url: str) -> tuple[str, str | None]:
     """
     Resolve a Vimeo review URL to a player URL that yt-dlp can handle.
+
+    Returns (resolved_url, referer) where referer is the original page URL
+    needed for embed-only player URLs, or None for direct URLs.
 
     Handles two URL formats:
     - Old style: vimeo.com/{user}/review/{id}/{hash}?version=1
@@ -41,7 +44,7 @@ def resolve_url(url: str) -> str:
     """
     if "/reviews/" in url:
         # New-style review URL — must fetch the page to get the hash token
-        return _resolve_reviews_url(url)
+        return _resolve_reviews_url(url), url
     elif "/review/" in url:
         # Old-style review URL — extract video_id/hash from path
         # Format: vimeo.com/{user}/review/{video_id}/{hash}?version=...
@@ -52,10 +55,10 @@ def resolve_url(url: str) -> str:
             idx = parts.index('review')
             video_id = parts[idx + 1]
             video_hash = parts[idx + 2]
-            return f"https://player.vimeo.com/video/{video_id}?h={video_hash}"
+            return f"https://player.vimeo.com/video/{video_id}?h={video_hash}", url
         except (ValueError, IndexError):
-            return url
-    return url
+            return url, None
+    return url, None
 
 
 def _resolve_reviews_url(url: str) -> str:
@@ -104,7 +107,7 @@ def _resolve_reviews_url(url: str) -> str:
 
 def download_video(url: str, output_dir: Path) -> Path:
     """Download a Vimeo video using yt-dlp in the best available quality."""
-    url = resolve_url(url)
+    resolved_url, referer = resolve_url(url)
     output_template = str(output_dir / "%(title)s.%(ext)s")
 
     cmd = [
@@ -115,10 +118,12 @@ def download_video(url: str, output_dir: Path) -> Path:
         "--output", output_template,
         "--no-playlist",
         "--print", "after_move:filepath",
-        url,
     ]
+    if referer:
+        cmd += ["--referer", referer]
+    cmd.append(resolved_url)
 
-    log(f"Downloading: {url}")
+    log(f"Downloading: {resolved_url}")
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
@@ -207,8 +212,11 @@ def _format_srt_time(seconds: float) -> str:
 
 def download_description(url: str, output_dir: Path) -> Path:
     """Download the video description and save it as a markdown file."""
-    resolved = resolve_url(url)
-    cmd = ["yt-dlp", "--print", "description", resolved]
+    resolved, referer = resolve_url(url)
+    cmd = ["yt-dlp", "--print", "description"]
+    if referer:
+        cmd += ["--referer", referer]
+    cmd.append(resolved)
 
     log(f"Fetching description: {resolved}")
     result = subprocess.run(cmd, capture_output=True, text=True)
