@@ -14,11 +14,36 @@ import datetime
 import json
 import os
 import re
+import ssl
 import sys
 import subprocess
 import tempfile
 import urllib.request
 from pathlib import Path
+
+
+def _make_ssl_context():
+    """Create an SSL context that skips certificate verification."""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def _fetch_url(url: str, headers: dict | None = None) -> str:
+    """Fetch a URL and return the response body as a string."""
+    hdrs = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+    }
+    if headers:
+        hdrs.update(headers)
+    req = urllib.request.Request(url, headers=hdrs)
+    with urllib.request.urlopen(req, context=_make_ssl_context()) as resp:
+        return resp.read().decode("utf-8")
 
 
 def log(msg: str, *, file=None) -> None:
@@ -37,64 +62,154 @@ def resolve_url(url: str) -> tuple[str, str | None]:
     - Old style: vimeo.com/{user}/review/{id}/{hash}?version=1
     - New style: vimeo.com/reviews/{uuid}/videos/{id}
 
-    The new-style review URLs are not matched by yt-dlp's VimeoReviewIE,
-    so we fetch the review page (a Next.js app that embeds the full video
-    config in a __NEXT_DATA__ JSON blob) and extract the player URL
-    including the private hash token.
+    Both formats require fetching the review page to obtain the
+    embedPlayerConfigUrl (which contains bypass_privacy tokens), then
+    extracting the authenticated player URL from the config.
     """
+    if url in _resolved_url_cache:
+        return _resolved_url_cache[url]
+
+    result: tuple[str, str | None]
     if "/reviews/" in url:
         # New-style review URL — must fetch the page to get the hash token
-        return _resolve_reviews_url(url), url
+        result = _resolve_reviews_url(url), url
     elif "/review/" in url:
-        # Old-style review URL — extract video_id/hash from path
-        # Format: vimeo.com/{user}/review/{video_id}/{hash}?version=...
-        # Use player.vimeo.com embed URL so yt-dlp passes the hash correctly
-        parts = url.split('?')[0].rstrip('/').split('/')
-        # Find "review" in the path and grab the two segments after it
+        # Old-style review URL — fetch the review data page to get config
+        result = _resolve_old_review_url(url), url
+    else:
+        result = url, None
+
+    _resolved_url_cache[url] = result
+    return result
+
+
+def _resolve_old_review_url(url: str) -> str:
+    """Fetch an old-style Vimeo review data page and extract the player config URL.
+
+    The /review/data/ endpoint returns an HTML page with __NEXT_DATA__ that
+    contains an embedPlayerConfigUrl with bypass_privacy tokens.  We fetch
+    the config JSON from that URL to extract the HLS master playlist, which
+    yt-dlp can download directly without embed-domain restrictions.
+    """
+    parts = url.split('?')[0].rstrip('/').split('/')
+    try:
+        idx = parts.index('review')
+        video_id = parts[idx + 1]
+        video_hash = parts[idx + 2]
+    except (ValueError, IndexError):
+        return url
+
+    # Find the username (segment before "review")
+    username = parts[idx - 1] if idx > 0 else None
+    if not username:
+        return url
+
+    data_url = f"https://vimeo.com/{username}/review/data/{video_id}/{video_hash}"
+    log(f"Fetching review data from: {data_url}")
+
+    try:
+        html = _fetch_url(data_url)
+    except Exception as exc:
+        log(f"Warning: could not fetch review data page ({exc}), trying URL as-is", file=sys.stderr)
+        return url
+
+    # Extract embedPlayerConfigUrl and description from __NEXT_DATA__
+    config_url, og_description = _extract_embed_config_and_description(html)
+    if not config_url:
+        log("Warning: could not find embedPlayerConfigUrl, trying URL as-is", file=sys.stderr)
+        return url
+
+    # Pre-cache ogDescription from the review page (player config often lacks it)
+    if og_description:
+        _video_metadata["description"] = og_description
+
+    # Fetch the player config to get the HLS/DASH stream URL
+    return _resolve_stream_url_from_config(config_url, video_id, url)
+
+
+def _extract_embed_config_and_description(html: str) -> tuple[str | None, str | None]:
+    """Extract the embedPlayerConfigUrl and ogDescription from __NEXT_DATA__."""
+    scripts = re.findall(
+        r'<script[^>]*type="application/json"[^>]*>(.*?)</script>',
+        html, re.DOTALL,
+    )
+    for script_body in scripts:
         try:
-            idx = parts.index('review')
-            video_id = parts[idx + 1]
-            video_hash = parts[idx + 2]
-            return f"https://player.vimeo.com/video/{video_id}?h={video_hash}", url
-        except (ValueError, IndexError):
-            return url, None
-    return url, None
+            data = json.loads(script_body)
+            page_props = data.get("props", {}).get("pageProps", {})
+            config_url = page_props.get("embedPlayerConfigUrl")
+            if config_url:
+                og_desc = page_props.get("ogDescription", "")
+                return config_url, og_desc
+        except (json.JSONDecodeError, AttributeError):
+            continue
+    return None, None
+
+
+def _resolve_stream_url_from_config(config_url: str, video_id: str, original_url: str) -> str:
+    """Fetch the player config JSON and return a direct stream URL for yt-dlp.
+
+    Also caches video metadata (title, description) in _video_metadata.
+    """
+    log(f"Fetching player config for video {video_id}…")
+    try:
+        config_body = _fetch_url(config_url, {"Referer": "https://vimeo.com/"})
+        config = json.loads(config_body)
+    except Exception as exc:
+        log(f"Warning: could not fetch player config ({exc}), trying URL as-is", file=sys.stderr)
+        return original_url
+
+    # Cache video metadata for later use by download_video / download_description
+    video_info = config.get("video", {})
+    if video_info.get("title"):
+        _video_metadata["title"] = video_info["title"]
+    # Only overwrite description if the config has one (ogDescription may already be cached)
+    if video_info.get("description"):
+        _video_metadata["description"] = video_info["description"]
+
+    files = config.get("request", {}).get("files", {})
+
+    # Prefer HLS (yt-dlp handles it natively with format selection)
+    for stream_type in ("hls", "dash"):
+        stream = files.get(stream_type, {})
+        cdn = stream.get("default_cdn")
+        if cdn:
+            cdn_info = stream.get("cdns", {}).get(cdn, {})
+            stream_url = cdn_info.get("avc_url") or cdn_info.get("url")
+            if stream_url:
+                log(f"Resolved to {stream_type.upper()} stream for video {video_id}")
+                return stream_url
+
+    log("Warning: no stream URL found in config, trying original URL as-is", file=sys.stderr)
+    return original_url
+
+
+# Cache for video metadata extracted during URL resolution
+_video_metadata: dict[str, str] = {}
+# Cache for resolved URL results to avoid repeated network fetches
+_resolved_url_cache: dict[str, tuple[str, str | None]] = {}
 
 
 def _resolve_reviews_url(url: str) -> str:
     """Fetch a new-style Vimeo review page and extract the player URL."""
     log("Resolving Vimeo review URL…")
-    req = urllib.request.Request(url, headers={
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        )
-    })
     try:
-        with urllib.request.urlopen(req) as resp:
-            html = resp.read().decode("utf-8")
+        html = _fetch_url(url)
     except Exception as exc:
         log(f"Warning: could not fetch review page ({exc}), trying URL as-is", file=sys.stderr)
         return url
 
-    # Try __NEXT_DATA__ JSON blob first
-    match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
-    if match:
-        try:
-            raw = json.loads(match.group(1))
-            player_match = re.search(
-                r'player\.vimeo\.com/video/(\d+)\?h=([0-9a-f]+)',
-                json.dumps(raw),
-            )
-            if player_match:
-                player_url = f"https://player.vimeo.com/video/{player_match.group(1)}?h={player_match.group(2)}"
-                log(f"Resolved to: {player_url}")
-                return player_url
-        except (json.JSONDecodeError, KeyError):
-            pass
+    # Try to get embedPlayerConfigUrl from __NEXT_DATA__ (preferred path)
+    config_url, og_desc = _extract_embed_config_and_description(html)
+    if config_url:
+        if og_desc:
+            _video_metadata["description"] = og_desc
+        # Extract video_id from the config URL
+        vid_match = re.search(r'/video/(\d+)/', config_url)
+        video_id = vid_match.group(1) if vid_match else "unknown"
+        return _resolve_stream_url_from_config(config_url, video_id, url)
 
-    # Fallback: scan the raw HTML for the player URL
+    # Fallback: scan for player.vimeo.com URL with hash token
     player_match = re.search(r'player\.vimeo\.com/video/(\d+)\?h=([0-9a-f]+)', html)
     if player_match:
         player_url = f"https://player.vimeo.com/video/{player_match.group(1)}?h={player_match.group(2)}"
@@ -108,17 +223,26 @@ def _resolve_reviews_url(url: str) -> str:
 def download_video(url: str, output_dir: Path) -> Path:
     """Download a Vimeo video using yt-dlp in the best available quality."""
     resolved_url, referer = resolve_url(url)
-    output_template = str(output_dir / "%(title)s.%(ext)s")
+
+    # If we have a cached title from the player config, sanitise it for the filename
+    cached_title = _video_metadata.get("title", "")
+    if cached_title:
+        safe_title = re.sub(r"[^a-zA-Z0-9]+", "-", cached_title).strip("-")
+        output_template = str(output_dir / f"{safe_title}.%(ext)s")
+    else:
+        output_template = str(output_dir / "%(title)s.%(ext)s")
 
     cmd = [
         "yt-dlp",
+        "--no-check-certificates",
         "--format", "bestvideo+bestaudio/best",
         "--merge-output-format", "mp4",
-        "--replace-in-metadata", "title", r"[^a-zA-Z0-9]+", "-",
         "--output", output_template,
         "--no-playlist",
         "--print", "after_move:filepath",
     ]
+    if not cached_title:
+        cmd += ["--replace-in-metadata", "title", r"[^a-zA-Z0-9]+", "-"]
     if referer:
         cmd += ["--referer", referer]
     cmd.append(resolved_url)
@@ -211,21 +335,29 @@ def _format_srt_time(seconds: float) -> str:
 
 
 def download_description(url: str, output_dir: Path) -> Path:
-    """Download the video description and save it as a markdown file."""
-    resolved, referer = resolve_url(url)
-    cmd = ["yt-dlp", "--print", "description"]
-    if referer:
-        cmd += ["--referer", referer]
-    cmd.append(resolved)
+    """Download the video description and save it as a markdown file.
 
-    log(f"Fetching description: {resolved}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    Uses cached metadata from resolve_url() when available, falling back
+    to yt-dlp --print description for non-review URLs.
+    """
+    description = _video_metadata.get("description", "")
 
-    if result.returncode != 0:
-        log(f"Error fetching description:\n{result.stderr}", file=sys.stderr)
-        sys.exit(1)
+    if not description:
+        # Fallback for non-review URLs: use yt-dlp
+        resolved, referer = resolve_url(url)
+        cmd = ["yt-dlp", "--no-check-certificates", "--print", "description"]
+        if referer:
+            cmd += ["--referer", referer]
+        cmd.append(resolved)
 
-    description = result.stdout.strip()
+        log(f"Fetching description: {resolved}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        if result.returncode != 0:
+            log(f"Error fetching description:\n{result.stderr}", file=sys.stderr)
+            sys.exit(1)
+
+        description = result.stdout.strip()
     # Convert to markdown: replace leading asterisks with hyphens for list items
     lines = description.splitlines()
     for i, line in enumerate(lines):
@@ -276,6 +408,9 @@ def main() -> None:
 
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve the URL early so metadata is cached for description & download
+    resolve_url(args.url)
 
     # Download description if requested
     desc_path = None
