@@ -404,6 +404,11 @@ def main() -> None:
         action="store_true",
         help="Download the video description and save as a markdown file.",
     )
+    parser.add_argument(
+        "--desc-only", "--do",
+        action="store_true",
+        help="Download only the video description (as markdown) and stop. No video download or transcription.",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir).resolve()
@@ -414,8 +419,15 @@ def main() -> None:
 
     # Download description if requested
     desc_path = None
-    if args.description:
+    if args.description or args.desc_only:
         desc_path = download_description(args.url, output_dir)
+
+    # If --desc-only, stop after downloading the description
+    if args.desc_only:
+        log("Done!")
+        if desc_path:
+            log(f"  Description: {desc_path}")
+        return
 
     # Download
     video_path = download_video(args.url, output_dir)
