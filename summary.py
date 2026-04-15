@@ -82,6 +82,7 @@ def main():
             out_file.write(f"## {formatted_date}\n")
 
             with open(desc_file, "r", encoding="utf-8") as df:
+                print(f"Adding content from {desc_file}...")
                 content = df.read()
             out_file.write(content)
 
