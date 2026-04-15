@@ -1,0 +1,12 @@
+- 00:22 - In your experience, what is the best way to rebuild confidence? Would you recommend sim trading?
+- 08:59 - Student Trade Analysis (November 6th): I’m still having trouble determining a pullback trade from a failed breakout. Yesterday after the initial morning run up, I bought the 38% retracement but was stopped out. I frequently make this mistake. How can I improve?
+- 20:11 - Student Trade Review (November 2nd): I placed an order at 2700.50. When the reaction came from 2701.50 and it moved 4.5 points I cancelled the order thinking the reaction already happened. Was my thinking wrong?
+- 24:07 - Student Trade Review (November 6th): I took a Short at 2751.50 in the afternoon thinking we could have a false breakout. Was this a valid setup?
+- 26:32 - I have a question about the terminology on EMiniPlayer. What do you mean when you say “take it step by step” in the Trade Plan?
+- 33:21 - Chart Review (November 7th): How do we take profit in a run up like today?
+- 34:00 - Do you look forward to these high volatility environments? Any suggestions for capturing these monster moves?
+- 37:38 - When you fade a Zone using a 5-point Stop, is it a good idea to take the trade at the front of a Zone with the Stop 2 points behind the Zone?
+- 38:48 - Chart Review (November 7th): How did you know in the afternoon that today was going to be a trend day? It’s easy to see in hindsight, but tough in real time.
+- 41:41 - Chart Review (November 7th): Where would you get in today?
+- 43:14 - When you are building your Zones, what time-frames do you use? 
+- 43:59 - Market Analysis and Outlook
