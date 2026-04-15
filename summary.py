@@ -70,7 +70,7 @@ def main():
         print("No valid YYYYMMDD subdirectories found.")
         return
 
-    with open(output_path, "w") as out_file:
+    with open(output_path, "w", encoding="utf-8") as out_file:
         for dir_name in date_dirs:
             subdir_path = os.path.join(input_dir, dir_name)
             desc_file = find_description_file(subdir_path)
@@ -81,7 +81,7 @@ def main():
             formatted_date = f"{dir_name[4:6]}-{dir_name[6:8]}-{dir_name[:4]}"
             out_file.write(f"## {formatted_date}\n")
 
-            with open(desc_file, "r") as df:
+            with open(desc_file, "r", encoding="utf-8") as df:
                 content = df.read()
             out_file.write(content)
 
