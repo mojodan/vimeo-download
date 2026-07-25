@@ -3,7 +3,6 @@
 import argparse
 import os
 import re
-from datetime import datetime
 
 
 def parse_args():
@@ -24,16 +23,24 @@ def parse_args():
 
 
 def resolve_output_path(output_path):
-    """Ensure .md extension and make the filename unique if it already exists."""
+    """Ensure .md extension."""
     if not output_path.endswith(".md"):
         output_path += ".md"
-
-    if os.path.exists(output_path):
-        base, ext = os.path.splitext(output_path)
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        output_path = f"{base}_{timestamp}{ext}"
-
     return output_path
+
+
+def get_cutoff_date_from_file(output_path):
+    """Read the first ## heading from the output file and return its date as YYYYMMDD."""
+    with open(output_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("##"):
+                date_str = line[2:].strip()  # "MM-DD-YYYY"
+                parts = date_str.split("-")
+                if len(parts) == 3:
+                    mm, dd, yyyy = parts
+                    return f"{yyyy}{mm}{dd}"
+    return None
 
 
 def get_sorted_date_dirs(input_dir):
@@ -70,27 +77,69 @@ def main():
         print("No valid YYYYMMDD subdirectories found.")
         return
 
-    with open(output_path, "w", encoding="utf-8") as out_file:
+    if os.path.exists(output_path):
+        # Incremental update: only process directories newer than the most recent entry
+        cutoff = get_cutoff_date_from_file(output_path)
+        if cutoff is not None:
+            date_dirs = [d for d in date_dirs if d > cutoff]
+
+        if not date_dirs:
+            print("No new entries to add.")
+            return
+
+        new_content = []
         for dir_name in date_dirs:
             subdir_path = os.path.join(input_dir, dir_name)
             desc_file = find_description_file(subdir_path)
             if desc_file is None:
                 continue
 
-            # Convert YYYYMMDD to MM-DD-YYYY for the heading
             formatted_date = f"{dir_name[4:6]}-{dir_name[6:8]}-{dir_name[:4]}"
-            out_file.write(f"## {formatted_date}\n")
+            new_content.append(f"## {formatted_date}\n")
 
             with open(desc_file, "r", encoding="utf-8") as df:
                 print(f"Adding content from {desc_file}...")
                 content = df.read()
-            out_file.write(content)
+            new_content.append(content)
 
-            # Ensure a trailing newline between sections
             if not content.endswith("\n"):
-                out_file.write("\n")
+                new_content.append("\n")
 
-    print(f"Summary written to {output_path}")
+        if not new_content:
+            print("No new entries to add.")
+            return
+
+        with open(output_path, "r", encoding="utf-8") as f:
+            existing_content = f.read()
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("".join(new_content))
+            f.write(existing_content)
+
+        print(f"New entries prepended to {output_path}")
+    else:
+        # Fresh file: write all entries
+        with open(output_path, "w", encoding="utf-8") as out_file:
+            for dir_name in date_dirs:
+                subdir_path = os.path.join(input_dir, dir_name)
+                desc_file = find_description_file(subdir_path)
+                if desc_file is None:
+                    continue
+
+                # Convert YYYYMMDD to MM-DD-YYYY for the heading
+                formatted_date = f"{dir_name[4:6]}-{dir_name[6:8]}-{dir_name[:4]}"
+                out_file.write(f"## {formatted_date}\n")
+
+                with open(desc_file, "r", encoding="utf-8") as df:
+                    print(f"Adding content from {desc_file}...")
+                    content = df.read()
+                out_file.write(content)
+
+                # Ensure a trailing newline between sections
+                if not content.endswith("\n"):
+                    out_file.write("\n")
+
+        print(f"Summary written to {output_path}")
 
 
 if __name__ == "__main__":

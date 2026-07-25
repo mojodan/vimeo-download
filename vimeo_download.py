@@ -234,7 +234,9 @@ def download_video(url: str, output_dir: Path) -> Path:
 
     cmd = [
         "yt-dlp",
+        "-v",
         "--no-check-certificates",
+        "--cookies", "C:\\Users\\dhaye\\repos\\vimeo\\vimeo-download\\vimeo-cookies.txt",
         "--format", "bestvideo+bestaudio/best",
         "--merge-output-format", "mp4",
         "--output", output_template,
