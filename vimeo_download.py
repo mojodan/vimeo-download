@@ -184,6 +184,9 @@ def _resolve_stream_url_from_config(config_url: str, video_id: str, original_url
     return original_url
 
 
+# Netscape-format cookies file used for authenticated Vimeo requests
+COOKIES_FILE = Path(__file__).resolve().parent / "cookies.txt"
+
 # Cache for video metadata extracted during URL resolution
 _video_metadata: dict[str, str] = {}
 # Cache for resolved URL results to avoid repeated network fetches
@@ -236,7 +239,7 @@ def download_video(url: str, output_dir: Path) -> Path:
         "yt-dlp",
         "-v",
         "--no-check-certificates",
-        "--cookies", "C:\\Users\\dhaye\\repos\\vimeo\\vimeo-download\\vimeo-cookies.txt",
+        "--cookies", str(COOKIES_FILE),
         "--format", "bestvideo+bestaudio/best",
         "--merge-output-format", "mp4",
         "--output", output_template,
@@ -347,7 +350,11 @@ def download_description(url: str, output_dir: Path) -> Path:
     if not description:
         # Fallback for non-review URLs: use yt-dlp
         resolved, referer = resolve_url(url)
-        cmd = ["yt-dlp", "--no-check-certificates", "--print", "description"]
+        cmd = [
+            "yt-dlp", "--no-check-certificates",
+            "--cookies", str(COOKIES_FILE),
+            "--print", "description",
+        ]
         if referer:
             cmd += ["--referer", referer]
         cmd.append(resolved)
